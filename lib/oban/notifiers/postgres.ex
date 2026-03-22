@@ -209,7 +209,7 @@ if Code.ensure_loaded?(Postgrex) do
     end
 
     defp query(statement, state) do
-      {:query, ["DO $$BEGIN ", statement, " END$$"], state}
+      {:query, statement, state}
     end
 
     defp to_full_channel(channel, %Config{prefix: prefix}) do

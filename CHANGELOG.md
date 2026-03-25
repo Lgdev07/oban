@@ -1,222 +1,115 @@
-# Changelog for Oban v2.20
+# Changelog for Oban v2.21
 
 _🌟 Looking for changes to [Oban Pro][pro]? Check the [Oban.Pro Changelog][opc] 🌟_
 
-This release brings a fantastic new helper function, an optional migration to aid pruning, some
-stability improvements, and a bevy of documentation updates.
+This release requires PostgreSQL 14+, adds a new `suspended` job state, includes targeted
+performance improvements for job execution and notifications, and a variety of bug fixes.
 
-See the [Upgrade Guide](v2-20.html) for _optional_ upgrade instructions.
+See the [Upgrade Guide](v2-21.html) for upgrade instructions.
 
-## 🦋 Update Job
+## 🚟 Suspended State
 
-This introduces the `Oban.update_job/2,3` function to simplify updating existing jobs while
-ensuring data consistency and safety. Previously, updating jobs required manually constructing
-change operations or complex queries that could lead to race conditions or invalid state changes.
+The new `suspended` state allows jobs to be held without processing until they are explicitly
+resumed. Unlike `scheduled` jobs that become `available` when their time comes, suspended jobs
+remain paused indefinitely until an external action resumes them.
 
-Only a curated subset of job fields, e.g. `:args`, `:max_attempts`, `:meta`, etc. may be updated
-and they use the same validation rules as insertion to prevent invalid data. Updates are also
-wrapped in a transaction with locking clauses to prevent concurrent modifications.
+While Oban itself doesn't make use of suspended jobs, the state enables Pro workflows to defer
+execution without any workarounds or performance impact.
 
-The function supports direct map changes:
+See the [Upgrade Guide](v2-21.html) for details on migrating.
 
-```elixir
-Oban.update_job(job, %{priority: 0, tags: ["urgent"]})
-```
+## 📏 Performance Tweaks
 
-It also has a convenient function-based mode for dynamic changes:
+Two targeted optimizations reduce overhead in high-throughput systems:
 
-```elixir
-Oban.update_job(job, fn job ->
-  %{meta: Map.put(job.meta, "processed_by", current_node())}
-end)
-```
+- Selective Compression — Notifications under 512 bytes skip gzip compression entirely, avoiding
+  CPU overhead for typical small messages like queue signals and insert events. Encoding is 12x
+  faster for small payloads (4μs → 0.3μs) and wire size is halved (80 → 41 bytes). Large payloads
+  still compress with no regression.
 
-## ❄️ Unique State Groups
+- Batched Process Metrics — Job execution telemetry now gathers memory and reduction metrics in a
+  single `Process.info/2` call instead of two separate calls, cutting per-job measurement overhead
+  in half.
 
-There are now named unique state groups to replace custom state lists for unique jobs, promoting
-better uniqueness design and reducing configuration errors.
+## v2.21.0 — 2026-03-23
 
-Previously, developers had to manually specify lists of job states for uniqueness, which was
-error-prone and could lead to subtle bugs when states were omitted or incorrectly combined. The
-new predefined groups ensure correctness and consistency across applications.
+### Changes
 
-The new state groups are:
+- [Oban] Support a minimum of PostgreSQL 14+
 
-- **`:all`** - All job states
-- **`:incomplete`** - Jobs that haven't finished (`~w(available scheduled executing retryable)a`)
-- **`:scheduled`** - Only scheduled jobs (`[:scheduled]`)
-- **`:successful`** - Jobs that completed successfully (`~w(available scheduled executing retryable completed)a`)
-
-These groups eliminate the risk of accidentally creating incomplete or incorrect state lists that
-could allow duplicate jobs to be created when they shouldn't be, or prevent valid job creation
-when duplicates should be allowed.
-
-## 🪺 Nested Plugin Supervision
-
-Plugins and the internal Stager are now nested within a secondary supervision tree to improve
-system resilience and stability.
-
-Previously, plugins were supervised directly under the main Oban supervisor alongside core
-process. This meant that plugin failures could potentially impact the entire Oban system, and
-frequent plugin restarts could trigger cascading failures in the primary supervision tree.
-
-The new supervisor has more lenient restart limits to allow for more plugin restart attempts
-before giving up. This change makes Oban more robust in production environments where plugins may
-experience transient failures due to database or connectivity issues.
-
-## v2.20.3 — 2025-01-22
+  PG 12 was end of life in November 2024, and PG 13 was end of life in November 2025. We now
+  support PG 14+, and with PG 19 due out in a few months, we're dropping official support for
+  older versions.
 
 ### Enhancements
 
-- [Worker] Allow snoozing jobs by returning a tuple period
+- [Oban] Add suspended job state
 
-  It's now possible to snooze jobs with a period such as `{1, :minute}` instead of just a raw
-  number of seconds.
+  The suspended state allows jobs to be held without processing until they are explicitly resumed.
+  It is accepted for unique and replace operations, and is part of the incomplete state group. The
+  suspended state is used by Pro extensions rather than by Oban itself.
 
-- [Oban] Validate no duplicate options are passed to config on init
+- [Worker] Elevate `__opts__/0` to a documented callback
 
-  Because options are provided as a keyword list, duplicate options were accepted while only one
-  was actually used.
+  The `__opts__/0` function, which returns a worker's compile-time options, is now a public
+  callback with full documentation. This makes it easier to introspect worker configuration at
+  runtime, such as checking the default queue, max attempts, or uniqueness settings for any worker
+  module.
 
-### Bug Fixes
+- [Period] Document and publicize `Oban.Period` module
 
-- [Oban] Fix starting a queue on a specific node
+  The `t:Period.t()` type is referenced by several public types and should be visible to users in
+  documentation.
 
-  The `:node` option was incorrectly preserved when starting a queue, which would crash it. Now
-  the `:node` is dropped after scoping the start signal.
+- [Executor] Batch process info calls in executor measurements
 
-- [Reindexer] Fix dropping invalid indexes from the reindexer
+  Reduces system call overhead by combining separate memory and reductions queries into a single
+  `Process.info/2` call per job execution.
 
-  The reindexer would fail sliently with "DROP INDEX CONCURRENTLY" cannot be executed from a
-  function message because the deindex operation used a `DO` block to loop through and drop
-  invalid indexes, but PostgreSQL prohibits `CONCURRENTLY` operations inside functions or DO
-  blocks. Now invalid indexes are fetched first, then dropped as individual queries.
+- [Notifier] Skip compression for small notification payloads
 
-- [Installer] Prevent installer crash with unsupported adapters
+  Notifications under 512 bytes are sent as plain JSON, avoiding gzip overhead for typical small
+  messages like queue signals and insert events.
 
-  The installer would crash with a `CaseClauseError` when a project had an Ecto repo using an
-  unsupported adapter like `Ecto.Adapters.Tds`.
+  Encode is 12x faster for small payloads (4.08 μs → 0.34 μs) and decode is 6.7x faster (1.78 μs →
+  0.26 μs). Wire size is halved (80 → 41 bytes).
 
-  Now the installer filters repos to find one with a supported adapter, skipping unsupported ones
-  automatically. Without a compatible repo, it displays an error message listing the found repos
-  and their adapters, along with guidance on how to specify a repo explicitly.
+  Large payloads retain compression with no performance regression.
 
-- [Pruner] Better sqlite timestamp default and pruning query
+- [Notifier] Remove wrapper from notifier LISTEN/UNLISTEN
 
-  The `CURRENT_TIMESTAMP` type lacks a trailing `z`, which causes it to be compared incorrectly
-  against UTC datetimes. Any jobs inserted without a `scheduled_at`, where the default is used,
-  could be returned in queries that compare against a `DateTime`.
-
-  This prevents the issue in the future two ways:
-
-  1. Switch the default `inserted_at/scheduled_at` timestamp to a format that can be queried
-     properly.
-  2. Change the pruning check to use `completed_at` rather than `scheduled_at` for existing
-     databases. This is a more accurate query that was avoided before because it didn't match the
-  `Basic` engine.
-
-## v2.20.2 — 2025-12-04
-
-### Enhancements
-
-- [Telemetry] Add domain to `attach_default_logger` metadata
-
-  Although this information is present in the source attribute, it’s not part of the metadata,
-  it’s part of the attributes. And when `encode = true`, it’s generated as a string, which makes
-  it less convenient to work with.
-
-- [Cron] Add unique cron entry identifiers to job meta
-
-  A id value is generated for each cron entry and stored in the job's meta to distinguish between
-  different cron jobs with the same expression.
+  SimpleConnection uses the simple query protocol which handles multiple semicolon-separated
+  statements directly, eliminating the need for a `DO $$BEGIN ... END$$` anonymous block. This
+  makes the Postgres notifier _more_ compatible with Postgres-compatible databases like
+  PlanetScale.
 
 ### Bug Fixes
 
-- [Stager] Order staging query to maximize compound index usage
+- [Testing] Support snooze periods with testing helpers
 
-  The core compound index couldn't be utilized by staging queries when the planner estimated a
-  large number of hits. Changing the query to order by `scheduled_at` and `id`, it becomes an
-  index scan.
+  The `perform_job/3` helper wasn't aware of snooze periods and considered snoozing with a period
+  an error.
 
-  It would still be more efficient to use a dedicated index, but OSS doesn't have any mechanisms
-  for automatic concurrent index creation and we have to save it for later.
+- [Oban] Correct type checking for `insert_all/3` streams
 
-- [Executor] Take measurements from the executing process
+  Some stream functions return a multi arity function rather than a Struct. This updates the
+  `Oban.insert_all` guard to handle all stream variants properly. Thanks Elixir 1.20!
 
-  When Producer starts jobs, it calls `Executor.new` in its own process, before handing it off to
-  `Task.Supervisor.async_nolink` to call `Executor.call`. That means it used the Producer `pid`,
-  and took measurements from that process.
+- [Notifier] Fix Sonar and Midwife listener loss after Notifier crash
 
-- [Oban] Set `scheduled` state correctly when updating with `update_job/3`
+  Both Sonar and Midwife register as listeners on the Notifier during init, but under the
+  one_for_one supervisor strategy, a Notifier crash only restarts the Notifier rather than any
+  siblings. The new Notifier starts with an empty listener map, silently breaking notification
+  delivery.
 
-  When the `scheduled_at` timestamp is set during `update_job`, the state is automatically set to
-  `scheduled`. This mirrors the functionality of `insert_job`.
+  For Sonar, this means pings are sent but never received back, causing it to degrade to :isolated
+  status. For Midwife, signal notifications (queue start/stop) are never delivered.
 
-  Note that the value of the timestamp isn't considered. Setting a timestamp in the past will set
-  the job as `scheduled`. This isn't a problem in practice because the stager will change the
-  state to `available` on the next cycle anyhow.
+- [Stager] Protect from Notifier crash during staging
 
-- [Repo] Include `:deadlock_detected` in expected errors
+  Prevent an exit from a dead or dying Notifier from cascading into a Stager crash.
 
-  Deadlocks are automatically resolved by Postgres because it aborts one transaction. At that
-  point, the retry should succeed quickly since the blocking transaction is gone.
-
-## v2.20.1 — 2025-08-15
-
-### Bug Fixes
-
-- [Worker] Handle missing fields in unique Worker validation.
-
-  Workers that specified `keys` without `fields` would fail validation at compile time. Now
-  default values are considered for `use Oban.Worker` as well as `Job.new/2`.
-
-## v2.20.0 — 2025-08-13
-
-### Enhancements
-
-- `Migration` Add V13 migration for indexing cancelled and discarded states.
-
-  A new V13 migration adds compound indexes to significantly improve `Oban.Plugins.Pruner`
-  performance when cleaning up `discarded` and `cancelled` jobs. This is especially beneficial for
-  applications that process large volumes of jobs and retain them for extended periods.
-
-- `Repo` Expose dynamic repo switching as `with_dynamic_repo/2`
-
-  The function was previously internal, which made impossible to use in external modules or extend
-  upon. Now custom plugins and extensions can use `Repo.with_dynamic_repo/2` to use the configured
-  dynamic repo options.
-
-### Bug Fixes
-
-- [Oban] Allow `insert_all/1,3` via Oban facade
-
-  The `insert_all/1` and `insert_all/3` function variants were missing from the generated Oban
-  facade functions when using a named instance.
-
-- [Testing] Generate correct `perform_job/1,2,3` clauses.
-
-  The `perform_job/2,3` clauses generated by `use Oban.Testing` didn't handle the `perform_job/2`
-  variant designed to run jobs created with `build_job/3`. This caused test failures when trying
-  to execute jobs built using the `build_job/3` helper function.
-
-  The fix generates the missing `perform_job/2` clause along with a convenient `perform_job/1`
-  variant, ensuring all testing scenarios work seamlessly regardless of how jobs are constructed.
-
-- [Testing] Restrict inline execution to `available` and `scheduled` states.
-
-  Jobs in the `completed` state or other non-runnable states were incorrectly attempted by the
-  inline engine, potentially causing errors or unexpected behavior during testing.
-
-- [Worker] Disallow `:keys` when `:fields` doesn't contain `:args` or `:meta`
-
-  Unique job configurations using `:keys` were allowed even when `:fields` didn't include `:args`
-  or `:meta`, which would result in runtime errors since keys can only extract values from these
-  keyable fields.
-
-- [Cron] Fix error message when the crontab has an invalid range.
-
-  Cron validation errors for invalid ranges were returning exception structs instead of readable
-  error messages, making it difficult to understand and fix crontab configuration issues.
+- [Job] Update `t:unique_option/0` to support state groups
 
 [pro]: https://oban.pro
 [opc]: https://oban.pro/docs/pro/changelog.html

@@ -9,39 +9,7 @@ defmodule Oban.Migrations.Postgres.V09 do
       add_if_not_exists(:cancelled_at, :utc_datetime_usec)
     end
 
-    execute """
-    DO $$
-    BEGIN
-      IF NOT EXISTS (
-        SELECT 1 FROM pg_enum
-        WHERE enumlabel = 'cancelled'
-        AND enumtypid = '#{quoted}.oban_job_state'::regtype
-      ) THEN
-        ALTER TYPE #{quoted}.oban_job_state RENAME TO oban_job_state_old;
-
-        CREATE TYPE #{quoted}.oban_job_state AS ENUM (
-          'available',
-          'scheduled',
-          'executing',
-          'retryable',
-          'completed',
-          'discarded',
-          'cancelled'
-        );
-
-        ALTER TABLE #{quoted}.oban_jobs RENAME COLUMN state TO _state;
-
-        ALTER TABLE #{quoted}.oban_jobs
-          ADD state #{quoted}.oban_job_state NOT NULL DEFAULT 'available';
-
-        UPDATE #{quoted}.oban_jobs SET state = _state::text::#{quoted}.oban_job_state;
-
-        ALTER TABLE #{quoted}.oban_jobs DROP COLUMN _state;
-
-        DROP TYPE #{quoted}.oban_job_state_old;
-      END IF;
-    END$$;
-    """
+    execute "ALTER TYPE #{quoted}.oban_job_state ADD VALUE IF NOT EXISTS 'cancelled'"
 
     create_if_not_exists index(:oban_jobs, [:state, :queue, :priority, :scheduled_at, :id],
                            prefix: prefix
@@ -54,39 +22,6 @@ defmodule Oban.Migrations.Postgres.V09 do
       remove_if_exists(:cancelled_at, :utc_datetime_usec)
     end
 
-    execute """
-    DO $$
-    BEGIN
-      IF EXISTS (
-        SELECT 1 FROM pg_enum
-        WHERE enumlabel = 'cancelled'
-        AND enumtypid = '#{quoted}.oban_job_state'::regtype
-      ) THEN
-        UPDATE #{quoted}.oban_jobs SET state = 'discarded' WHERE state = 'cancelled';
-
-        ALTER TYPE #{quoted}.oban_job_state RENAME TO oban_job_state_old;
-
-        CREATE TYPE #{quoted}.oban_job_state AS ENUM (
-          'available',
-          'scheduled',
-          'executing',
-          'retryable',
-          'completed',
-          'discarded'
-        );
-
-        ALTER TABLE #{quoted}.oban_jobs RENAME COLUMN state TO _state;
-
-        ALTER TABLE #{quoted}.oban_jobs
-          ADD state #{quoted}.oban_job_state NOT NULL DEFAULT 'available';
-
-        UPDATE #{quoted}.oban_jobs SET state = _state::text::#{quoted}.oban_job_state;
-
-        ALTER TABLE #{quoted}.oban_jobs DROP COLUMN _state;
-
-        DROP TYPE #{quoted}.oban_job_state_old;
-      END IF;
-    END$$;
-    """
+    execute "UPDATE #{quoted}.oban_jobs SET state = 'discarded' WHERE state = 'cancelled'"
   end
 end

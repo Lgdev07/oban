@@ -31,6 +31,17 @@ Two targeted optimizations reduce overhead in high-throughput systems:
   single `Process.info/2` call instead of two separate calls, cutting per-job measurement overhead
   in half.
 
+## v2.21.1 — 2026-03-26
+
+### Bug Fixes
+
+- [Migration] Use `ALTER TYPE` to add suspended to state enum
+
+  The previous DO/BEGIN technique attempted to alter the enum type with a enum rename/column copy
+  dance in order for the type to be usable within the same transaction. That's not necessary, and
+  the column copy isn't appropriate for larger tables. As we now require PG 14+, we can reliably
+  use `ALTER TYPE` to add the `suspended` value.
+
 ## v2.21.0 — 2026-03-25
 
 ### Changes

@@ -31,7 +31,7 @@ Two targeted optimizations reduce overhead in high-throughput systems:
   single `Process.info/2` call instead of two separate calls, cutting per-job measurement overhead
   in half.
 
-## v2.21.0 — 2026-03-23
+## v2.21.0 — 2026-03-25
 
 ### Changes
 

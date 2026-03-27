@@ -655,7 +655,7 @@ defmodule Oban.Testing do
   defp base_query(opts) do
     query =
       Job
-      |> where([j], j.state in ["available", "scheduled"])
+      |> where([j], j.state in ~w(available scheduled suspended))
       |> order_by(desc: :id)
 
     opts

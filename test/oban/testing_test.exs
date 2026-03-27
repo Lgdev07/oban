@@ -263,6 +263,19 @@ defmodule Oban.TestingTest do
       assert [%Job{}] = all_enqueued(worker: Pong, queue: :gamma)
       assert [%Job{}, %Job{}, %Job{}] = all_enqueued()
     end
+
+    test "retrieving jobs only in an incomplete state" do
+      insert!(%{id: 1}, state: "suspended")
+      insert!(%{id: 2}, state: "scheduled")
+      insert!(%{id: 3}, state: "available")
+      insert!(%{id: 4}, state: "executing")
+      insert!(%{id: 5}, state: "completed")
+
+      assert [1, 2, 3] ==
+               all_enqueued()
+               |> Enum.map(& &1.args["id"])
+               |> Enum.sort()
+    end
   end
 
   describe "assert_enqueued/1" do

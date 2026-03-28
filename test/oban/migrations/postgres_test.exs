@@ -55,6 +55,24 @@ defmodule Oban.Migrations.PostgresTest do
 
   @base_version 20_300_000_000_000
 
+  test "verifying that any migrations have ran" do
+    assert_raise RuntimeError, ~r/migrations have not been run/, fn ->
+      start_supervised_oban!(repo: Repo, testing: :manual, prefix: "does_not_exist")
+    end
+  end
+
+  test "verifying the database is migrated to the required version" do
+    Application.put_env(:oban, :up_version, current_version() - 1)
+
+    assert :ok = Ecto.Migrator.up(UnboxedRepo, @base_version, StepMigration)
+
+    assert_raise RuntimeError, ~r/migrations are outdated/, fn ->
+      start_supervised_oban!(repo: UnboxedRepo, testing: :manual, prefix: "migrating")
+    end
+  after
+    clear_migrated()
+  end
+
   test "migrating up and down between specific versions" do
     for up <- initial_version()..current_version() do
       Application.put_env(:oban, :up_version, up)

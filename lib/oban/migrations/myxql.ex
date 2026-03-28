@@ -5,6 +5,8 @@ defmodule Oban.Migrations.MyXQL do
 
   use Ecto.Migration
 
+  def current_version, do: 1
+
   @impl Oban.Migration
   def up(_opts) do
     states =
@@ -65,5 +67,21 @@ defmodule Oban.Migrations.MyXQL do
   end
 
   @impl Oban.Migration
-  def migrated_version(_opts), do: 0
+  def migrated_version(opts) do
+    repo = Keyword.get_lazy(opts, :repo, fn -> repo() end)
+    config = repo.config()
+    database = Keyword.fetch!(config, :database)
+
+    query = """
+    SELECT 1
+    FROM information_schema.TABLES
+    WHERE TABLE_SCHEMA = '#{database}'
+    AND TABLE_NAME = 'oban_jobs'
+    """
+
+    case repo.query(query, [], log: false) do
+      {:ok, %{rows: [[1]]}} -> 1
+      _ -> 0
+    end
+  end
 end

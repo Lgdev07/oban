@@ -13,7 +13,7 @@ defmodule Oban.Migrations.MyXQLTest do
     end
   end
 
-  @moduletag :lite
+  @moduletag :dolphin
 
   defmodule Migration do
     use Ecto.Migration
@@ -27,9 +27,27 @@ defmodule Oban.Migrations.MyXQLTest do
     end
   end
 
-  test "migrating a mysql database" do
+  defp storage_up(_conf) do
     MigrationRepo.__adapter__().storage_up(MigrationRepo.config())
+  end
 
+  defp storage_down do
+    MigrationRepo.__adapter__().storage_down(MigrationRepo.config())
+  end
+
+  setup :storage_up
+
+  test "verifying that any migrations have ran" do
+    start_supervised!(MigrationRepo)
+
+    assert_raise RuntimeError, ~r/migrations have not been run/, fn ->
+      start_supervised_oban!(repo: MigrationRepo, testing: :manual)
+    end
+  after
+    storage_down()
+  end
+
+  test "migrating a mysql database" do
     start_supervised!(MigrationRepo)
 
     assert :ok = Ecto.Migrator.up(MigrationRepo, 1, Migration)
@@ -40,7 +58,7 @@ defmodule Oban.Migrations.MyXQLTest do
     refute table_exists?("oban_jobs")
     refute table_exists?("oban_peers")
   after
-    MigrationRepo.__adapter__().storage_down(MigrationRepo.config())
+    storage_down()
   end
 
   defp table_exists?(name) do

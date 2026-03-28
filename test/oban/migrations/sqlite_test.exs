@@ -27,6 +27,14 @@ defmodule Oban.Migrations.SQLiteTest do
     end
   end
 
+  test "verifying that any migrations have ran" do
+    start_supervised!(MigrationRepo)
+
+    assert_raise RuntimeError, ~r/migrations have not been run/, fn ->
+      start_supervised_oban!(repo: MigrationRepo, testing: :manual)
+    end
+  end
+
   test "migrating a sqlite database" do
     start_supervised!(MigrationRepo)
 

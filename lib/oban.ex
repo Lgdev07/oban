@@ -511,7 +511,15 @@ defmodule Oban do
   def start_link(opts) when is_list(opts) do
     conf = Config.new(opts)
 
+    verify_migrated!(conf)
+
     Supervisor.start_link(__MODULE__, conf, name: Registry.via(conf.name, nil, conf))
+  end
+
+  defp verify_migrated!(conf) do
+    if conf.testing != :disabled do
+      Oban.Migration.verify_migrated!(repo: conf.repo, prefix: conf.prefix)
+    end
   end
 
   @doc false

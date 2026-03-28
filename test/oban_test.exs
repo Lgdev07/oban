@@ -595,17 +595,13 @@ defmodule ObanTest do
       use Oban, otp_app: :oban, repo: Oban.Test.Repo
     end
 
-    start_supervised!({MyOban, testing: :inline})
+    start_supervised!({MyOban, testing: :manual})
 
     assert %{name: MyOban, repo: Oban.Test.Repo} = MyOban.config()
   end
 
-  defp start_supervised_oban(context) do
-    name =
-      context
-      |> Map.get(:oban_opts, [])
-      |> Keyword.put_new(:testing, :manual)
-      |> start_supervised_oban!()
+  defp start_supervised_oban(_context) do
+    name = start_supervised_oban!(testing: :manual)
 
     {:ok, name: name}
   end

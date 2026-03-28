@@ -9,11 +9,16 @@ defmodule Oban.Migrations.MyXQLTest do
     alias Oban.Test.DolphinRepo
 
     def init(_, _) do
-      {:ok, Keyword.put(DolphinRepo.config(), :database, "oban_migrations")}
+      opts =
+        DolphinRepo.config()
+        |> Keyword.put(:database, "oban_migrations")
+        |> Keyword.delete(:pool)
+
+      {:ok, opts}
     end
   end
 
-  @moduletag :dolphin
+  @moduletag :lite
 
   defmodule Migration do
     use Ecto.Migration

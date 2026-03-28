@@ -206,9 +206,10 @@ defmodule Oban.Migration do
   end
 
   @doc false
-  def verify_migrated!(opts \\ []) when is_list(opts) do
+  def verify_migrated!(opts) when is_list(opts) do
+    opts = Keyword.put_new_lazy(opts, :repo, &repo/0)
     current = current_version(opts)
-    version = migrated_version(opts)
+    version = unboxed_run(opts, fn -> migrated_version(opts) end)
 
     cond do
       version == 0 ->
@@ -249,6 +250,18 @@ defmodule Oban.Migration do
 
       true ->
         :ok
+    end
+  end
+
+  defp unboxed_run(opts, fun) do
+    repo = Keyword.fetch!(opts, :repo)
+
+    case Keyword.get(repo.config(), :pool) do
+      Ecto.Adapters.SQL.Sandbox = pool ->
+        pool.unboxed_run(repo, fun)
+
+      _ ->
+        fun.()
     end
   end
 

@@ -18,7 +18,7 @@ defmodule Oban.Migrations.MyXQLTest do
     end
   end
 
-  @moduletag :lite
+  @moduletag :dolphin
 
   defmodule Migration do
     use Ecto.Migration

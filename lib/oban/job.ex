@@ -11,6 +11,7 @@ defmodule Oban.Job do
   use Ecto.Schema
 
   import Ecto.Changeset
+  import Ecto.Query, only: [where: 3]
   import Oban.Period, only: [is_valid_period: 1]
 
   alias Ecto.Changeset
@@ -203,6 +204,23 @@ defmodule Oban.Job do
     days
     week
     weeks
+  )a
+
+  @query_fields ~w(
+    id
+    state
+    queue
+    worker
+    priority
+    attempt
+    max_attempts
+    tags
+    attempted_at
+    cancelled_at
+    completed_at
+    discarded_at
+    inserted_at
+    scheduled_at
   )a
 
   @unique_fields ~w(args meta queue worker)a
@@ -422,6 +440,93 @@ defmodule Oban.Job do
 
   def unique_states(:successful),
     do: ~w(suspended available scheduled executing retryable completed)a
+
+  @doc """
+  Build a composable query over `Oban.Job` from a keyword list of filters.
+
+  * Scalar values become equality matches
+  * List values become `IN` matches, except the `:tags` field, which is always compared as a
+    complete array
+  * Atom values are coerced to strings for `:state` and `:queue`, and modules are coerced for
+    `:worker`.
+  * Unknown fields, `nil` values, and empty lists (except for on `:tags`) will raise an
+    `ArgumentError`.
+
+  The return value is an `Ecto.Queryable` that can be piped into further `Ecto.Query` composition
+  or passed to functions like `Oban.cancel_all_jobs/2` and `Oban.delete_all_jobs/2`.
+
+  ## Examples
+
+  Match a single field:
+
+      Oban.Job.query(state: "completed")
+
+  Match multiple values in a field:
+
+      Oban.Job.query(state: ~w(completed cancelled))
+
+  Combine multiple filters:
+
+      Oban.Job.query(worker: MyApp.Worker, state: :available, queue: :default)
+
+  Compose with further `Ecto.Query` calls:
+
+      import Ecto.Query
+
+      [state: :available]
+      |> Oban.Job.query()
+      |> order_by(desc: :id)
+      |> limit(100)
+  """
+  @doc since: "2.22.0"
+  @spec query([{atom(), term()}]) :: Ecto.Query.t()
+  def query(filters) when is_list(filters) do
+    Enum.reduce(filters, __MODULE__, fn {field, value}, query ->
+      validate_filter!(field, value)
+
+      case {field, coerce_value(field, value)} do
+        {:tags, value} ->
+          where(query, [job], job.tags == ^value)
+
+        {_field, list} when is_list(list) ->
+          where(query, [job], field(job, ^field) in ^list)
+
+        {_field, value} ->
+          where(query, [job], field(job, ^field) == ^value)
+      end
+    end)
+  end
+
+  defp validate_filter!(field, _value) when field not in @query_fields do
+    raise ArgumentError,
+          "unknown filter field #{inspect(field)}, " <>
+            "expected one of #{inspect(@query_fields)}"
+  end
+
+  defp validate_filter!(field, nil) do
+    raise ArgumentError, "filter #{inspect(field)} values can't be nil"
+  end
+
+  defp validate_filter!(field, []) when field != :tags do
+    raise ArgumentError, "filter #{inspect(field)} can't be an empty list"
+  end
+
+  defp validate_filter!(_field, _value), do: :ok
+
+  defp coerce_value(:worker, value) when is_atom(value), do: inspect(value)
+
+  defp coerce_value(:worker, values) when is_list(values) do
+    Enum.map(values, &coerce_value(:worker, &1))
+  end
+
+  defp coerce_value(field, value) when field in ~w(state queue)a and is_atom(value),
+    do: to_string(value)
+
+  defp coerce_value(field, values) when field in ~w(state queue)a and is_list(values) do
+    Enum.map(values, &coerce_value(field, &1))
+  end
+
+  defp coerce_value(_field, value), do: value
 
   @doc """
   Convert a Job changeset into a map suitable for database insertion.

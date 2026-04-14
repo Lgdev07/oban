@@ -237,4 +237,115 @@ defmodule Oban.JobTest do
       for {key, val} <- opts, do: assert(map[key] == val)
     end
   end
+
+  describe "query/1" do
+    defp all(filters) do
+      filters
+      |> Job.query()
+      |> Repo.all()
+    end
+
+    test "filtering by id" do
+      job_a = insert!(%{}, worker: Worker)
+      _job_ = insert!(%{}, worker: Worker)
+      job_c = insert!(%{}, worker: Worker)
+
+      assert [_] = all(id: job_a.id)
+      assert [_, _] = all(id: [job_a.id, job_c.id])
+      assert [] = all(id: 1_000_000)
+    end
+
+    test "filtering by state" do
+      insert!(%{}, worker: Worker, state: "available")
+      insert!(%{}, worker: Worker, state: "completed")
+      insert!(%{}, worker: Worker, state: "cancelled")
+
+      assert [%Job{state: "available"}] = all(state: "available")
+      assert [%Job{state: "available"}] = all(state: :available)
+
+      assert [_, _] = all(state: ~w(completed cancelled))
+      assert [_, _] = all(state: [:completed, :cancelled])
+    end
+
+    test "filtering by worker" do
+      insert!(%{}, worker: MyApp.Alpha)
+      insert!(%{}, worker: MyApp.Beta)
+      insert!(%{}, worker: MyApp.Gamma)
+
+      assert [%Job{worker: "MyApp.Alpha"}] = all(worker: MyApp.Alpha)
+      assert [%Job{worker: "MyApp.Alpha"}] = all(worker: "MyApp.Alpha")
+
+      assert [_, _] = all(worker: [MyApp.Alpha, MyApp.Beta])
+      assert [_, _] = all(worker: ["MyApp.Alpha", "MyApp.Beta"])
+    end
+
+    test "filtering by queue" do
+      insert!(%{}, worker: Worker, queue: "alpha")
+      insert!(%{}, worker: Worker, queue: "beta")
+      insert!(%{}, worker: Worker, queue: "gamma")
+
+      assert [%Job{queue: "alpha"}] = all(queue: "alpha")
+      assert [%Job{queue: "alpha"}] = all(queue: :alpha)
+      assert [_, _] = all(queue: ~w(alpha beta))
+    end
+
+    test "filtering by priority" do
+      insert!(%{}, worker: Worker, priority: 0)
+      insert!(%{}, worker: Worker, priority: 5)
+      insert!(%{}, worker: Worker, priority: 9)
+
+      assert [%Job{priority: 0}] = all(priority: 0)
+      assert [_, _] = all(priority: [0, 5])
+      assert [] = all(priority: 3)
+    end
+
+    test "filtering by tags" do
+      insert!(%{}, worker: Worker, tags: ["urgent"])
+      insert!(%{}, worker: Worker, tags: ["urgent", "vip"])
+      insert!(%{}, worker: Worker, tags: [])
+
+      assert [%Job{tags: ["urgent"]}] = all(tags: ["urgent"])
+      assert [%Job{tags: ["urgent", "vip"]}] = all(tags: ["urgent", "vip"])
+      assert [%Job{tags: []}] = all(tags: [])
+    end
+
+    test "combining multiple filters" do
+      insert!(%{}, worker: MyApp.Alpha, queue: "alpha", state: "completed")
+      insert!(%{}, worker: MyApp.Alpha, queue: "alpha", state: "cancelled")
+      insert!(%{}, worker: MyApp.Beta, queue: "alpha", state: "completed")
+
+      assert [_, _] = all(worker: MyApp.Alpha, state: ~w(completed cancelled))
+      assert [_] = all(worker: MyApp.Alpha, state: "completed", queue: "alpha")
+    end
+
+    test "composing with further Ecto.Query calls" do
+      import Ecto.Query, only: [order_by: 2, limit: 2]
+
+      insert!(%{}, worker: Worker, priority: 9)
+      insert!(%{}, worker: Worker, priority: 1)
+      insert!(%{}, worker: Worker, priority: 5)
+
+      query =
+        [priority: [1, 5, 9]]
+        |> Job.query()
+        |> order_by(asc: :priority)
+        |> limit(2)
+
+      assert [%Job{priority: 1}, %Job{priority: 5}] = Repo.all(query)
+    end
+
+    test "raising on unknown fields, nil values, and empty lists" do
+      assert_raise ArgumentError, ~r/unknown filter field :foo/, fn ->
+        Job.query(foo: "bar")
+      end
+
+      assert_raise ArgumentError, ~r/can't be nil/, fn ->
+        Job.query(state: nil)
+      end
+
+      assert_raise ArgumentError, ~r/can't be an empty list/, fn ->
+        Job.query(state: [])
+      end
+    end
+  end
 end

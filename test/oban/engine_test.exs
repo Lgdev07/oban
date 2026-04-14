@@ -526,6 +526,36 @@ for engine <- [Oban.Engines.Basic, Oban.Engines.Lite, Oban.Engines.Dolphin] do
       end
     end
 
+    describe "all_jobs/2" do
+      setup :start_supervised_oban
+
+      test "fetching all jobs from an unscoped queryable", %{name: name} do
+        job_1 = insert!(name, %{ref: 1}, state: "available")
+        job_2 = insert!(name, %{ref: 2}, state: "completed")
+        job_3 = insert!(name, %{ref: 3}, state: "cancelled")
+
+        jobs = Oban.all_jobs(name, Job)
+
+        assert Enum.map(jobs, & &1.id) |> Enum.sort() ==
+                 Enum.sort([job_1.id, job_2.id, job_3.id])
+      end
+
+      test "fetching jobs from a filtered query", %{name: name} do
+        job_1 = insert!(name, %{ref: 1}, queue: :alpha, state: "available")
+        _job_2 = insert!(name, %{ref: 2}, queue: :alpha, state: "completed")
+        _job_3 = insert!(name, %{ref: 3}, queue: :gamma, state: "available")
+        job_4 = insert!(name, %{ref: 4}, queue: :alpha, state: "cancelled")
+        _job_5 = insert!(name, %{ref: 5}, worker: MiniUniq, queue: :alpha, state: "available")
+
+        jobs =
+          [worker: Worker, queue: :alpha, state: ~w(available cancelled)]
+          |> Job.query()
+          |> then(&Oban.all_jobs(name, &1))
+
+        assert Enum.map(jobs, & &1.id) |> Enum.sort() == Enum.sort([job_1.id, job_4.id])
+      end
+    end
+
     describe "cancel_all_jobs/2" do
       setup :start_supervised_oban
 

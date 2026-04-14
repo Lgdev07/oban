@@ -51,6 +51,13 @@ defmodule Oban.Stager do
   end
 
   @impl GenServer
+  def handle_call(:stage, _from, %State{} = state) do
+    {:noreply, state} = handle_info(:stage, state)
+
+    {:reply, :ok, state}
+  end
+
+  @impl GenServer
   def handle_info(:stage, %State{} = state) do
     state = check_mode(state)
     meta = %{conf: state.conf, leader: Peer.leader?(state.conf), plugin: __MODULE__}
@@ -90,7 +97,20 @@ defmodule Oban.Stager do
       staged
     end)
   rescue
-    error in [DBConnection.ConnectionError, Postgrex.Error] -> {:error, error}
+    error in [DBConnection.ConnectionError, Postgrex.Error] ->
+      {:error, error}
+
+    error in [UndefinedFunctionError] ->
+      Logger.warning(
+        [
+          message: "Stager skipped tick, repo module unavailable: #{Exception.message(error)}",
+          source: :oban,
+          module: __MODULE__
+        ],
+        domain: [:oban]
+      )
+
+      {:ok, []}
   end
 
   defp stage_and_notify(_leader, state) do

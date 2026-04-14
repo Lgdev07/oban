@@ -334,6 +334,36 @@ defmodule Oban.JobTest do
       assert [%Job{priority: 1}, %Job{priority: 5}] = Repo.all(query)
     end
 
+    test "filtering by args containment" do
+      insert!(%{account_id: 1, region: "us-east"}, worker: Worker)
+      insert!(%{account_id: 1, region: "us-west"}, worker: Worker)
+      insert!(%{account_id: 2, region: "us-east"}, worker: Worker)
+      insert!(%{user: %{id: 42, role: "admin"}}, worker: Worker)
+
+      assert [_, _] = all(args: %{account_id: 1})
+      assert [_] = all(args: %{account_id: 1, region: "us-east"})
+      assert [_] = all(args: %{user: %{id: 42}})
+      assert [] = all(args: %{account_id: 99})
+    end
+
+    test "filtering by meta containment" do
+      insert!(%{}, worker: Worker, meta: %{batch_id: "abc", priority: "high"})
+      insert!(%{}, worker: Worker, meta: %{batch_id: "abc", priority: "low"})
+      insert!(%{}, worker: Worker, meta: %{batch_id: "xyz"})
+
+      assert [_, _] = all(meta: %{batch_id: "abc"})
+      assert [_] = all(meta: %{batch_id: "abc", priority: "high"})
+      assert [] = all(meta: %{batch_id: "none"})
+    end
+
+    test "combining args with other filters" do
+      insert!(%{account_id: 1}, worker: Worker, state: "available")
+      insert!(%{account_id: 1}, worker: Worker, state: "completed")
+      insert!(%{account_id: 2}, worker: Worker, state: "available")
+
+      assert [%Job{state: "available"}] = all(args: %{account_id: 1}, state: "available")
+    end
+
     test "raising on unknown fields, nil values, and empty lists" do
       assert_raise ArgumentError, ~r/unknown filter field :foo/, fn ->
         Job.query(foo: "bar")
@@ -345,6 +375,14 @@ defmodule Oban.JobTest do
 
       assert_raise ArgumentError, ~r/can't be an empty list/, fn ->
         Job.query(state: [])
+      end
+
+      assert_raise ArgumentError, ~r/can't be empty/, fn ->
+        Job.query(args: %{})
+      end
+
+      assert_raise ArgumentError, ~r/must be a map/, fn ->
+        Job.query(meta: [])
       end
     end
   end

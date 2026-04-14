@@ -215,6 +215,8 @@ defmodule Oban.Job do
     attempt
     max_attempts
     tags
+    args
+    meta
     attempted_at
     cancelled_at
     completed_at
@@ -449,7 +451,10 @@ defmodule Oban.Job do
     complete array
   * Atom values are coerced to strings for `:state` and `:queue`, and modules are coerced for
     `:worker`.
-  * Unknown fields, `nil` values, and empty lists (except for on `:tags`) will raise an
+  * Map values for `:args` and `:meta` become JSONB containment matches, with nested maps and
+    multiple keys supported natively. Only Postgres is supported; SQLite and MySQL users should
+    compose JSON filters with `Ecto.Query` directly.
+  * Unknown fields, `nil` values, empty lists (except on `:tags`), and empty maps will raise an
     `ArgumentError`.
 
   The return value is an `Ecto.Queryable` that can be piped into further `Ecto.Query` composition
@@ -469,6 +474,12 @@ defmodule Oban.Job do
 
       Oban.Job.query(worker: MyApp.Worker, state: :available, queue: :default)
 
+  Match against `args` or `meta` with JSONB containment:
+
+      Oban.Job.query(args: %{account_id: 1})
+      Oban.Job.query(args: %{account_id: 1, region: "us-east"})
+      Oban.Job.query(args: %{user: %{id: 42}})
+
   Compose with further `Ecto.Query` calls:
 
       import Ecto.Query
@@ -485,6 +496,9 @@ defmodule Oban.Job do
       validate_filter!(field, value)
 
       case {field, coerce_value(field, value)} do
+        {field, value} when field in ~w(args meta)a ->
+          where(query, [job], fragment("? @> ?", field(job, ^field), ^value))
+
         {:tags, value} ->
           where(query, [job], job.tags == ^value)
 
@@ -505,6 +519,19 @@ defmodule Oban.Job do
 
   defp validate_filter!(field, nil) do
     raise ArgumentError, "filter #{inspect(field)} values can't be nil"
+  end
+
+  defp validate_filter!(field, value) when field in ~w(args meta)a do
+    cond do
+      is_map(value) and map_size(value) == 0 ->
+        raise ArgumentError, "filter #{inspect(field)} can't be empty"
+
+      is_map(value) ->
+        :ok
+
+      true ->
+        raise ArgumentError, "filter #{inspect(field)} must be a map, got: #{inspect(value)}"
+    end
   end
 
   defp validate_filter!(field, []) when field != :tags do

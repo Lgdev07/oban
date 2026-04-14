@@ -535,9 +535,9 @@ for engine <- [Oban.Engines.Basic, Oban.Engines.Lite, Oban.Engines.Dolphin] do
         job_3 = insert!(name, %{ref: 3}, state: "cancelled")
 
         jobs = Oban.all_jobs(name, Job)
+        jids = [job_1.id, job_2.id, job_3.id]
 
-        assert Enum.map(jobs, & &1.id) |> Enum.sort() ==
-                 Enum.sort([job_1.id, job_2.id, job_3.id])
+        assert jobs |> Enum.map(& &1.id) |> Enum.sort() == Enum.sort(jids)
       end
 
       test "fetching jobs from a filtered query", %{name: name} do
@@ -552,7 +552,7 @@ for engine <- [Oban.Engines.Basic, Oban.Engines.Lite, Oban.Engines.Dolphin] do
           |> Job.query()
           |> then(&Oban.all_jobs(name, &1))
 
-        assert Enum.map(jobs, & &1.id) |> Enum.sort() == Enum.sort([job_1.id, job_4.id])
+        assert jobs |> Enum.map(& &1.id) |> Enum.sort() == Enum.sort([job_1.id, job_4.id])
       end
     end
 

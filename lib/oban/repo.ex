@@ -35,7 +35,7 @@ defmodule Oban.Repo do
     This absorbs the window during which the repo module is unavailable, e.g. mid-recompile in a
     slow dev environment, so periodic plugins and stagers don't crash on a compile blip.
 
-  All retry logic uses compile-time configuration keyed on `Oban.Repo`:
+  Defaults for both loops are set at compile time and keyed on `Oban.Repo`:
 
       config :oban, Oban.Repo,
         retry_opts: [
@@ -45,13 +45,8 @@ defmodule Oban.Repo do
           expected_retry: 20
         ]
 
-  * `:delay` — milliseconds to sleep between unexpected-error retries (scaled by attempt and
-    jittered). Defaults to `500ms`.
-  * `:retry` — maximum attempts for unexpected errors. Defaults to `5`.
-  * `:expected_delay` — milliseconds to sleep between expected-conflict retries. Defaults to `10ms`.
-  * `:expected_retry` — maximum attempts for expected conflicts. Defaults to `20`.
-
-  This is a configuration time setting, so changes require recompiling `:oban`.
+  Changes require recompiling `:oban`. See `transaction/3` for the meaning of each option and for
+  per-call overrides.
   """
 
   @moduledoc since: "2.2.0"
@@ -183,15 +178,33 @@ defmodule Oban.Repo do
   Wraps `c:Ecto.Repo.transaction/2` with an additional `Oban.Config` argument and automatic
   retries with backoff.
 
+  Unexpected errors such as `DBConnection.ConnectionError`, `Postgrex.Error`, or `MyXQL.Error`
+  will retry with a delay scaled by attempt number. Expected conflicts (serialization failures,
+  deadlocks, and lock-not-available) retry with a shorter delay and higher attempt budget, since
+  they typically resolve quickly once contention clears.
+
   ## Options
 
-  Backoff helpers, in addition to the standard transaction options:
+  In addition to the standard `c:Ecto.Repo.transaction/2` options:
 
-  * `delay` — the time to sleep between retries, defaults to `500ms`
-  * `retry` — the number of retries for unexpected errors, defaults to `5`
-  * `expected_delay` — the time to sleep between expected errors, e.g. `serialization` or
-    `lock_not_available`, defaults to `10ms`
-  * `expected_retry` — the number of retries for expected errors, defaults to `20`
+  * `:delay` — milliseconds to sleep between unexpected-error retries, scaled by attempt and
+    jittered. Defaults to `500`.
+  * `:retry` — maximum attempts for unexpected errors. Defaults to `5`. Pass `0` or `false` to
+    disable retries entirely, including for expected conflicts.
+  * `:expected_delay` — milliseconds to sleep between expected-conflict retries, jittered.
+    Defaults to `10`.
+  * `:expected_retry` — maximum attempts for expected conflicts. Defaults to `20`.
+
+  Defaults are drawn from the compile-time `:retry_opts` configuration documented on the module.
+  Any option passed here overrides the compile-time default for this call.
+
+  > #### Nested Transactions {: .warning}
+  >
+  > When calling `transaction/3` inside an existing transaction, e.g. invoking > `Oban.insert/2`
+  > from within your application's own `Repo.transaction/2` block, pass `retry: false` to disable
+  > retries. A retry after a deadlock or serialization failure inside a savepoint will mask the
+  > real error from the outer transaction and leave you debugging a phantom timeout instead of
+  > the underlying conflict.
   """
   @doc since: "2.18.1"
   def transaction(conf, fun_or_multi, opts \\ []) do
@@ -205,6 +218,9 @@ defmodule Oban.Repo do
       opts = Keyword.merge(@retry_opts, opts)
 
       cond do
+        opts[:retry] in [0, false] ->
+          reraise error, __STACKTRACE__
+
         expected_error?(error) and attempt < opts[:expected_retry] ->
           jittery_sleep(opts[:expected_delay])
 

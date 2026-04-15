@@ -3,7 +3,7 @@ defmodule Oban.Sonar do
 
   use GenServer
 
-  alias Oban.Notifier
+  alias Oban.{Backoff, Notifier}
   alias __MODULE__, as: State
 
   require Logger
@@ -11,9 +11,11 @@ defmodule Oban.Sonar do
   defstruct [
     :conf,
     :timer,
-    interval: :timer.seconds(5),
+    :interval,
+    min_interval: :timer.seconds(5),
+    max_interval: :timer.seconds(60),
+    stale_after: :timer.seconds(120),
     nodes: %{},
-    stale_mult: 6,
     status: :unknown
   ]
 
@@ -34,7 +36,7 @@ defmodule Oban.Sonar do
   def init(state) do
     Process.flag(:trap_exit, true)
 
-    {:ok, state, {:continue, :start}}
+    {:ok, %{state | interval: state.min_interval}, {:continue, :start}}
   end
 
   @impl GenServer
@@ -75,6 +77,9 @@ defmodule Oban.Sonar do
 
   @impl GenServer
   def handle_info(:ping, state) do
+    prev_status = state.status
+    prev_nodes = Map.keys(state.nodes)
+
     try do
       Notifier.listen(state.conf.name, :sonar)
       Notifier.notify(state.conf, :sonar, %{node: state.conf.node, ping: true})
@@ -86,6 +91,12 @@ defmodule Oban.Sonar do
       state
       |> prune_stale_nodes()
       |> update_status()
+
+    changed? = state.status != prev_status or Map.keys(state.nodes) != prev_nodes
+
+    state =
+      state
+      |> adjust_interval(changed?)
       |> schedule_ping()
 
     {:noreply, state}
@@ -118,9 +129,29 @@ defmodule Oban.Sonar do
   # Helpers
 
   defp schedule_ping(state) do
-    timer = Process.send_after(self(), :ping, state.interval)
+    timer = Process.send_after(self(), :ping, Backoff.jitter(state.interval))
 
     %{state | timer: timer}
+  end
+
+  defp adjust_interval(state, true), do: %{state | interval: state.min_interval}
+
+  defp adjust_interval(state, false) do
+    target =
+      case state.status do
+        # Clustered scales with peer count becuase peer pings prove liveness
+        :clustered ->
+          peer_count = max(map_size(state.nodes), 1)
+          min(state.min_interval * peer_count, state.max_interval)
+
+        :solitary ->
+          state.max_interval
+
+        _ ->
+          state.min_interval
+      end
+
+    %{state | interval: min(state.interval * 2, target)}
   end
 
   defp update_status(state) do
@@ -142,8 +173,7 @@ defmodule Oban.Sonar do
 
   defp prune_stale_nodes(state) do
     stime = System.monotonic_time(:millisecond)
-    stale = state.interval * state.stale_mult
-    nodes = Map.reject(state.nodes, fn {_, recorded} -> stime - recorded > stale end)
+    nodes = Map.reject(state.nodes, fn {_, recorded} -> stime - recorded > state.stale_after end)
 
     %{state | nodes: nodes}
   end

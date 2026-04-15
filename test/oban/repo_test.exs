@@ -1,9 +1,26 @@
 defmodule Oban.RepoTest do
   use Oban.Case, async: true
 
+  alias Oban.Config
   alias Oban.Test.DynamicRepo
 
   @moduletag :unboxed
+
+  test "retrying dispatch when the configured repo module is unavailable" do
+    defmodule RepoTest.GhostRepo do
+      def __adapter__, do: Ecto.Adapters.Postgres
+      def config, do: []
+    end
+
+    conf = Config.new(repo: RepoTest.GhostRepo)
+
+    :code.purge(RepoTest.GhostRepo)
+    :code.delete(RepoTest.GhostRepo)
+
+    assert_raise UndefinedFunctionError, fn ->
+      Oban.Repo.all(conf, Oban.Job)
+    end
+  end
 
   test "querying with a dynamic repo (MFA)" do
     {:ok, repo_pid} = start_supervised({DynamicRepo, name: nil})

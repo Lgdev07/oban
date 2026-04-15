@@ -102,7 +102,7 @@ defmodule Oban.Backoff do
     with_retry(fun, retries, 1)
   end
 
-  @db_errors [DBConnection.ConnectionError, Postgrex.Error]
+  @db_errors [DBConnection.ConnectionError, MyXQL.Error, Postgrex.Error]
 
   defp with_retry(fun, retries, attempt) do
     fun.()

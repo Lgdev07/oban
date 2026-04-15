@@ -1,8 +1,6 @@
 defmodule Oban.StagerTest do
   use Oban.Case, async: true
 
-  import ExUnit.CaptureLog
-
   alias Oban.{Sonar, Stager}
   alias Oban.TelemetryHandler
 
@@ -73,36 +71,9 @@ defmodule Oban.StagerTest do
     assert_receive {:notification, :insert, %{"queue" => "staging_test"}}
   end
 
-  test "tolerating UndefinedFunctionError when the repo module is unavailable" do
-    defmodule StagerTest.FakeRepo do
-      def config, do: []
-    end
-
-    log =
-      capture_log(fn ->
-        name =
-          start_supervised_oban!(
-            repo: StagerTest.FakeRepo,
-            stage_interval: 5,
-            testing: :disabled,
-            peer: {Oban.Peers.Isolated, leader?: true}
-          )
-
-        tick_stager(name)
-      end)
-
-    assert log =~ "Stager skipped tick"
-  end
-
   defp ping_sonar(name) do
     name
     |> Oban.Registry.whereis(Sonar)
     |> GenServer.call(:ping)
-  end
-
-  defp tick_stager(name) do
-    name
-    |> Oban.Registry.whereis(Stager)
-    |> GenServer.call(:stage)
   end
 end

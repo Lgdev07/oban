@@ -20,6 +20,38 @@ defmodule Oban.Repo do
       Oban
       |> Oban.config()
       |> Oban.Repo.all(Oban.Job)
+
+  ## Retries
+
+  Every dispatch through `Oban.Repo` is wrapped in a bounded retry loop that tolerates transient
+  failures without surfacing them to callers:
+
+  * `DBConnection.ConnectionError`, `Postgrex.Error`, and `MyXQL.Error` raised from inside a
+    transaction are retried with backoff. Expected conflicts like serialization failures,
+    deadlocks, and lock-not-available use a shorter delay and higher retry count than unexpected
+    errors.
+
+  * `UndefinedFunctionError` raised by the configured repo module is retried for all operations.
+    This absorbs the window during which the repo module is unavailable, e.g. mid-recompile in a
+    slow dev environment, so periodic plugins and stagers don't crash on a compile blip.
+
+  All retry logic uses compile-time configuration keyed on `Oban.Repo`:
+
+      config :oban, Oban.Repo,
+        retry_opts: [
+          delay: 500,
+          retry: 5,
+          expected_delay: 10,
+          expected_retry: 20
+        ]
+
+  * `:delay` — milliseconds to sleep between unexpected-error retries (scaled by attempt and
+    jittered). Defaults to `500ms`.
+  * `:retry` — maximum attempts for unexpected errors. Defaults to `5`.
+  * `:expected_delay` — milliseconds to sleep between expected-conflict retries. Defaults to `10ms`.
+  * `:expected_retry` — maximum attempts for expected conflicts. Defaults to `20`.
+
+  This is a configuration time setting, so changes require recompiling `:oban`.
   """
 
   @moduledoc since: "2.2.0"
@@ -64,7 +96,12 @@ defmodule Oban.Repo do
     update_all: 3
   ]
 
-  @retry_opts delay: 500, retry: 5, expected_delay: 10, expected_retry: 20
+  @retry_opts Application.compile_env(:oban, [__MODULE__, :retry_opts],
+                delay: 500,
+                retry: 5,
+                expected_delay: 10,
+                expected_retry: 20
+              )
 
   for {fun, arity} <- @callbacks_without_opts do
     args = [Macro.var(:conf, __MODULE__) | Macro.generate_arguments(arity, __MODULE__)]
@@ -85,6 +122,15 @@ defmodule Oban.Repo do
     """
     def unquote(fun)(unquote_splicing(args), opts \\ []) do
       __dispatch__(unquote(fun), unquote(args), opts)
+    end
+  end
+
+  # Macros
+
+  @doc false
+  defmacro retryable_exceptions do
+    quote do
+      [DBConnection.ConnectionError, MyXQL.Error, Postgrex.Error, UndefinedFunctionError]
     end
   end
 
@@ -155,7 +201,7 @@ defmodule Oban.Repo do
   defp transaction(conf, fun_or_multi, opts, attempt) do
     __dispatch__(:transaction, [conf, fun_or_multi], opts)
   rescue
-    error in [DBConnection.ConnectionError, Postgrex.Error, MyXQL.Error] ->
+    error in [DBConnection.ConnectionError, MyXQL.Error, Postgrex.Error] ->
       opts = Keyword.merge(@retry_opts, opts)
 
       cond do
@@ -234,8 +280,28 @@ defmodule Oban.Repo do
   end
 
   defp dynamic_dispatch(conf, name, args) do
-    with_dynamic_repo(conf, fn repo -> apply(repo, name, args) end)
+    dynamic_dispatch(conf, name, args, 1)
   end
+
+  defp dynamic_dispatch(conf, name, args, attempt) do
+    with_dynamic_repo(conf, fn repo -> apply(repo, name, args) end)
+  rescue
+    error in UndefinedFunctionError ->
+      cond do
+        not repo_unavailable?(conf, error) ->
+          reraise error, __STACKTRACE__
+
+        attempt < @retry_opts[:retry] ->
+          jittery_sleep(attempt * @retry_opts[:delay])
+          dynamic_dispatch(conf, name, args, attempt + 1)
+
+        true ->
+          reraise error, __STACKTRACE__
+      end
+  end
+
+  defp repo_unavailable?(%Config{repo: repo}, %UndefinedFunctionError{module: repo}), do: true
+  defp repo_unavailable?(_conf, _error), do: false
 
   defp in_transaction?(conf, instance) when is_pid(instance), do: conf.repo.in_transaction?()
 

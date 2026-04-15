@@ -30,6 +30,7 @@ defmodule Oban.Peers.Database do
   alias __MODULE__, as: State
 
   require Logger
+  require Oban.Repo
 
   defstruct [
     :conf,
@@ -120,7 +121,7 @@ defmodule Oban.Peers.Database do
 
     {:noreply, schedule_election(state)}
   rescue
-    error in [DBConnection.ConnectionError, Postgrex.Error, MyXQL.Error] ->
+    error in Repo.retryable_exceptions() ->
       if match?(%{postgres: %{code: :undefined_table}}, error) do
         Logger.error(
           """
